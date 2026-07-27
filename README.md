@@ -10,7 +10,7 @@
 <p align="center">
   <a href="https://github.com/SINNOMBRE22/Eris-MD-02/stargazers"><img src="https://img.shields.io/github/stars/SINNOMBRE22/Eris-MD-02?color=ff69b4&style=for-the-badge&logo=github" alt="Stars"></a>
   <a href="https://github.com/SINNOMBRE22/Eris-MD-02/network/members"><img src="https://img.shields.io/github/forks/SINNOMBRE22/Eris-MD-02?color=ff69b4&style=for-the-badge&logo=github" alt="Forks"></a>
-  <a href="#"><img src="https://img.shields.io/badge/Maintained%3F-yes-green.svg?style=for-the-badge&logo=react" alt="Maintained"></a>
+  <img src="./assets/eris.gif" alt="Eris-MD" width="350"/>
 </p>
 
 ---
