@@ -34,7 +34,7 @@
     "@ibaraki-douji/pixivts": "^2.4.1",
     "@nirewen/apkcombo-downloader": "^1.0.3",
     "@vitalets/google-translate-api": "^8.0.0",
-    "@whiskeysockets/baileys": "^6.7.23",
+    "@whiskeysockets/baileys": "6.7.23",
     "@xct007/frieren-scraper": "^0.0.2",
     "acrcloud": "^1.4.0",
     "adm-zip": "^0.5.10",
