@@ -50,6 +50,9 @@ global.fkontak = {
 
 global.APIKeys = {}
 
+// --- Keys para quitar fondo (remove.bg) ---
+global.removebg = ['5GrhVRiLUaWoFjDA4meRmhj1',]
+
 // --- Branding y textos ---
 global.packname = 'Eris'
 global.wm = 'Eris Bot MD'      // obligado

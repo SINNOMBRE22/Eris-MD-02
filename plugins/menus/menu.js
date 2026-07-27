@@ -5,9 +5,24 @@ const newsletterJid = '120363407502496951@newsletter'
 const newsletterName = 'Eris Service'
 const redes = 'https://github.com/SINNOMBRE22/Eris-MD'
 
+// ── Emojis por categoría (fallback: 📌) ──
+const tagEmojis = {
+    admins:         '⚙️',
+    anime:          '🌸',
+    buscadores:     '🔎',
+    convertidores:  '🔁',
+    descargas:      '📥',
+    grupos:         '👥',
+    info:           'ℹ️',
+    netfree:        '🌐',
+    nsfw:           '🔞',
+    owner:          '👑',
+    sticker:        '🎨',
+    tools:          '🛠️'
+}
+
 const handler = async (m, { conn, usedPrefix }) => {
     try {
-        // ── DEBUG: verificar que global.plugins existe ──
         if (!global.plugins) {
             console.error('[menu] ERROR: global.plugins no está definido')
             return conn.reply(m.chat, '❌ global.plugins no está disponible.', m)
@@ -28,33 +43,24 @@ const handler = async (m, { conn, usedPrefix }) => {
             console.warn('[menu] Miniatura no encontrada:', e.message)
         }
 
-        const styles = {
-            header: '╾╾╾╾ ⌬ @category ⌬ ╾╾╾╾',
-            body:   '›  @cmd'
-        }
-
         const muptime      = formatUptime(process.uptime())
         const ram          = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2)
         const totalPlugins = Object.keys(global.plugins).length
 
-        const headerInfo = `💖✌️ (Paz y Amor ✌️💖)
+        // ── Header tipo tarjeta ──
+        const headerInfo = `╭━━━〔 ✌️ ${toBoldUnicode('ERIS - MD')} ✌️ 〕━━━⬣
+┃ 🎀 *RAM:* ${ram} MB
+┃ 💞 *Activo:* ${muptime}
+┃ 🧩 *Plugins:* ${totalPlugins}
+┃ 👑 *Dev:* SINNOMBRE22
+┃ 📱 wa.me/5215629885039
+╰━━━━━━━━━━━━━━━━⬣
 
-┣🎀 *RAM:* ${ram} MB
-┣💞 *Live:* ${muptime}
-
---- 📂 *INFO* ---
-🧩 Plugins: ${totalPlugins}
-
-━━━━━━━━━━━━━━
-👑 Dev: SINNOMBRE22
-📱 wa.me/5215629885039
-
-*Mis Comandos Disponibles*`
+*Mis Comandos Disponibles* 👇`
 
         // ── Construir lista de comandos ──
         const pluginList = Object.values(global.plugins)
 
-        // DEBUG: mostrar cuántos plugins tienen help y tags
         const withHelp = pluginList.filter(p => !p.disabled && p.help && p.tags)
         console.log(`[menu] Plugins totales: ${pluginList.length} | Con help+tags: ${withHelp.length}`)
 
@@ -73,19 +79,22 @@ const handler = async (m, { conn, usedPrefix }) => {
                     .filter(p => p.tags.includes(tag))
                     .flatMap(p =>
                         p.help.map(h =>
-                            styles.body.replace('@cmd', p.prefix ? h : usedPrefix + h)
+                            `┊ ✧ ${p.prefix ? h : usedPrefix + h}`
                         )
                     )
                     .join('\n')
 
                 if (!commands) return ''
-                return `${styles.header.replace('@category', tag.toUpperCase())}\n${commands}`
+                const emoji = tagEmojis[tag.toLowerCase()] ?? '📌'
+                return `╭─❍「 ${emoji} ${tag.toUpperCase()} 」\n${commands}\n╰─────────────❍`
             })
             .filter(Boolean)
             .join('\n\n')
 
+        const footer = `💖 Paz y Amor ✌️`
+
         const readMore = String.fromCharCode(8206).repeat(1500)
-        const menuText = `${headerInfo}\n${readMore}\n${menuList}`.trim()
+        const menuText = `${headerInfo}\n${readMore}\n${menuList}\n\n${footer}`.trim()
 
         console.log('[menu] Texto generado, largo:', menuText.length)
 
@@ -112,7 +121,6 @@ const handler = async (m, { conn, usedPrefix }) => {
         console.log('[menu] Mensaje enviado correctamente')
 
     } catch (e) {
-        // ── Log completo del error real ──
         console.error('[menu] ERROR COMPLETO:')
         console.error('  Mensaje:', e.message)
         console.error('  Stack:', e.stack)

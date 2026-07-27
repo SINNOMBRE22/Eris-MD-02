@@ -9,12 +9,39 @@ const NEWSLETTER_NAME = 'Eris Service';
 const SOURCE_URL = 'https://github.com/SINNOMBRE22/Eris-MD';
 const YTS_TIMEOUT_MS = 12_000;
 const TMP_DIR = path.join(process.cwd(), 'tmp');
+const BIN_DIR = path.join(TMP_DIR, 'bin');
+const YTDLP_LOCAL = path.join(BIN_DIR, 'yt-dlp');
+const YTDLP_URL = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp';
 const THUMB = (() => { try { return fs.readFileSync(path.join(process.cwd(), 'src/imagenes/perfil2.jpeg')); } catch { return Buffer.alloc(0); } })();
 const buildContext = (title = '🌸 ERIS SERVICE 🌸', body = '') => ({ isForwarded: true, forwardedNewsletterMessageInfo: { newsletterJid: NEWSLETTER_JID, newsletterName: NEWSLETTER_NAME, serverMessageId: -1 }, externalAdReply: { title, body, thumbnail: THUMB, mediaType: 1, renderLargerThumbnail: false, sourceUrl: SOURCE_URL } });
+
+// ── Resolver binario yt-dlp (sistema o local, con auto-descarga) ──
+let ytdlpBin = null;
+async function resolveYtdlp() {
+    if (ytdlpBin) return ytdlpBin;
+    // 1. ¿Está instalado en el sistema?
+    try { await execAsync('yt-dlp --version', { timeout: 10_000 }); ytdlpBin = 'yt-dlp'; return ytdlpBin; } catch {}
+    // 2. ¿Ya existe el binario local?
+    if (fs.existsSync(YTDLP_LOCAL)) {
+        try { await execAsync(`"${YTDLP_LOCAL}" --version`, { timeout: 10_000 }); ytdlpBin = YTDLP_LOCAL; return ytdlpBin; } catch { try { fs.unlinkSync(YTDLP_LOCAL); } catch {} }
+    }
+    // 3. Descargar binario oficial
+    console.log('[play] yt-dlp no encontrado, descargando binario…');
+    if (!fs.existsSync(BIN_DIR)) fs.mkdirSync(BIN_DIR, { recursive: true });
+    await execAsync(`curl -fsSL -o "${YTDLP_LOCAL}" "${YTDLP_URL}" || wget -q -O "${YTDLP_LOCAL}" "${YTDLP_URL}"`, { timeout: 120_000 });
+    if (!fs.existsSync(YTDLP_LOCAL)) throw new Error('No se pudo descargar yt-dlp');
+    fs.chmodSync(YTDLP_LOCAL, 0o755);
+    await execAsync(`"${YTDLP_LOCAL}" --version`, { timeout: 15_000 });
+    console.log('[play] ✅ yt-dlp instalado en', YTDLP_LOCAL);
+    ytdlpBin = YTDLP_LOCAL;
+    return ytdlpBin;
+}
+
 async function downloadAudio(videoUrl) {
+    const bin = await resolveYtdlp();
     if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR, { recursive: true });
     const outPath = path.join(TMP_DIR, `play_${Date.now()}.mp3`);
-    await execAsync(`yt-dlp --no-playlist -x --audio-format mp3 --audio-quality 128K --no-warnings --quiet -o "${outPath}" "${videoUrl}"`, { timeout: 90_000 });
+    await execAsync(`"${bin}" --no-playlist -x --audio-format mp3 --audio-quality 128K --no-warnings --quiet -o "${outPath}" "${videoUrl}"`, { timeout: 90_000 });
     if (!fs.existsSync(outPath)) throw new Error('yt-dlp no generó el archivo');
     return outPath;
 }
