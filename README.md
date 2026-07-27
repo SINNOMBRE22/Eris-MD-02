@@ -8,29 +8,60 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/SINNOMBRE22/Eris-MD/stargazers"><img src="https://img.shields.io/github/stars/SINNOMBRE22/Eris-MD?color=ff69b4&style=for-the-badge&logo=github" alt="Stars"></a>
-  <a href="https://github.com/SINNOMBRE22/Eris-MD/network/members"><img src="https://img.shields.io/github/forks/SINNOMBRE22/Eris-MD?color=ff69b4&style=for-the-badge&logo=github" alt="Forks"></a>
+  <a href="https://github.com/SINNOMBRE22/Eris-MD-02/stargazers"><img src="https://img.shields.io/github/stars/SINNOMBRE22/Eris-MD-02?color=ff69b4&style=for-the-badge&logo=github" alt="Stars"></a>
+  <a href="https://github.com/SINNOMBRE22/Eris-MD-02/network/members"><img src="https://img.shields.io/github/forks/SINNOMBRE22/Eris-MD-02?color=ff69b4&style=for-the-badge&logo=github" alt="Forks"></a>
   <a href="#"><img src="https://img.shields.io/badge/Maintained%3F-yes-green.svg?style=for-the-badge&logo=react" alt="Maintained"></a>
 </p>
 
 ---
 
-## 🚀 Instalación Rápida (VPS / Linux)
+## 🚀 Instalación Automática (VPS / Linux)
 
-### 1️⃣ Preparar Entorno (Node.js v24 & FFmpeg)
+Solo **3 pasos**. El instalador se encarga de Node.js, FFmpeg, dependencias y permisos.
+
+### 1️⃣ Clonar el repositorio
 ```bash
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash && export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" && nvm install 24 && nvm use 24 && nvm alias default 24 && sudo apt update && sudo apt install ffmpeg -y
+git clone https://github.com/SINNOMBRE22/Eris-MD-02.git && cd Eris-MD-02
 ```
 
-### 2️⃣ Clonar y Preparar Bot
+### 2️⃣ Ejecutar el instalador
 ```bash
-git clone https://github.com/SINNOMBRE22/Eris-MD.git && cd Eris-MD && npm install && mkdir -p tmp && chmod 777 tmp
+bash install.sh
+```
+> Instala **todo** automáticamente. Al terminar te muestra los comandos para iniciar.
+
+### 3️⃣ Configurar tus datos
+Edita **`settings.js`** con tu número de owner (ver sección de abajo).
+
+---
+
+## ▶️ Iniciar el Bot
+
+**Modo normal** (para probar / escanear código):
+```bash
+node index.js
 ```
 
-### 3️⃣ Iniciar 24/7 con PM2
+**Modo 24/7 con PM2** (recomendado en VPS):
 ```bash
-chmod +x pm2-bot.sh && bash pm2-bot.sh
+bash pm2-bot.sh
 ```
+
+Cuando inicies te pedirá el método de conexión:
+- **Opción 1** → Escanear código QR
+- **Opción 2** → Código de 8 dígitos (ingresa tu número **sin el `1`**, ej. `525629885039`)
+
+---
+
+## 🔧 Comandos PM2 útiles
+
+| Comando | Descripción |
+|---|---|
+| `pm2 logs eris-bot` | Ver la consola (aquí sale el QR o el código) |
+| `pm2 restart eris-bot` | Reiniciar el bot |
+| `pm2 stop eris-bot` | Detener el bot |
+| `pm2 delete eris-bot` | Eliminar el proceso |
+| `pm2 list` | Ver todos los procesos |
 
 ---
 
@@ -42,7 +73,6 @@ Edita tus datos en **`settings.js`** (no existe `config.js`):
 // Números owner: [ 'numero', 'nombre', true ]
 global.owner = [
   ['525629885039', 'SinNombre', true],
-  ['5215629885039', 'SinNombre', true], // con el 1 de México
 ]
 
 global.packname = 'Eris'
@@ -55,6 +85,14 @@ global.namebot  = 'Eris Bot'
 > ```js
 > global.prefix = new RegExp('^[#/!.]')
 > ```
+
+---
+
+## 🩺 Solución de problemas
+
+- **"No se pudo vincular el dispositivo"** → El número debe ir **sin el `1`** de México (ej. `525629885039`, no `5215629885039`) y ser exactamente el de la cuenta de WhatsApp donde metes el código.
+- **El código expira** → Tienes ~60 segundos. Ve rápido a WhatsApp → Dispositivos vinculados → Vincular con número de teléfono.
+- **Error de dependencias en `npm install`** → El instalador ya usa `--legacy-peer-deps`. Si instalas a mano, usa `npm install --legacy-peer-deps`.
 
 ---
 
