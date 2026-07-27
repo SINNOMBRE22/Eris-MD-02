@@ -1,0 +1,6 @@
+node_modules
+sesionEris/
+sesionEris
+src/database/database.json
+.env
+tmp/
