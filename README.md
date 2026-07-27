@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://i.pinimg.com/originals/60/76/8a/60768a1834162e2ac1894d36f6d525be.gif" alt="Eris-MD" width="350"/>
+  <img src="./src/imagenes/perfil001.gif" alt="Eris-MD" width="350"/>
 </p>
 
 <h1 align="center"> 🌸 Ｅｒｉｓ － ＭＤ 🌸 </h1>
@@ -10,7 +10,7 @@
 <p align="center">
   <a href="https://github.com/SINNOMBRE22/Eris-MD-02/stargazers"><img src="https://img.shields.io/github/stars/SINNOMBRE22/Eris-MD-02?color=ff69b4&style=for-the-badge&logo=github" alt="Stars"></a>
   <a href="https://github.com/SINNOMBRE22/Eris-MD-02/network/members"><img src="https://img.shields.io/github/forks/SINNOMBRE22/Eris-MD-02?color=ff69b4&style=for-the-badge&logo=github" alt="Forks"></a>
-  <img src="./assets/eris.gif" alt="Eris-MD" width="350"/>
+  <a href="#"><img src="https://img.shields.io/badge/Maintained%3F-yes-green.svg?style=for-the-badge&logo=react" alt="Maintained"></a>
 </p>
 
 ---
