@@ -5,6 +5,14 @@ const newsletterJid = '120363407502496951@newsletter'
 const newsletterName = 'Eris Service'
 const redes = 'https://github.com/SINNOMBRE22/Eris-MD'
 
+// ── Categorías que NO se muestran en el menú principal (tienen su propio menú) ──
+const hiddenTags = ['anime']
+
+// ── Sub-menús disponibles (para que el usuario sepa que existen) ──
+const subMenus = [
+    { cmd: 'menuanime', emoji: '🌸', desc: 'Interacciones anime' }
+]
+
 // ── Emojis por categoría (fallback: 📌) ──
 const tagEmojis = {
     admins:         '⚙️',
@@ -58,11 +66,17 @@ const handler = async (m, { conn, usedPrefix }) => {
 
 *Mis Comandos Disponibles* 👇`
 
-        // ── Construir lista de comandos ──
+        // ── Sección de sub-menús ──
+        const subMenuSection = subMenus.length
+            ? `╭─❍「 📚 MENÚS 」\n` +
+              subMenus.map(s => `┊ ✧ ${usedPrefix}${s.cmd} ${s.emoji} ${s.desc}`).join('\n') +
+              `\n╰─────────────❍`
+            : ''
+
+        // ── Construir lista de comandos (excluyendo categorías ocultas) ──
         const pluginList = Object.values(global.plugins)
 
         const withHelp = pluginList.filter(p => !p.disabled && p.help && p.tags)
-        console.log(`[menu] Plugins totales: ${pluginList.length} | Con help+tags: ${withHelp.length}`)
 
         const help = withHelp.map(p => ({
             help:   Array.isArray(p.help) ? p.help  : [p.help],
@@ -70,8 +84,10 @@ const handler = async (m, { conn, usedPrefix }) => {
             prefix: 'customPrefix' in p
         }))
 
-        const categories = [...new Set(help.flatMap(p => p.tags))].sort()
-        console.log('[menu] Categorías:', categories)
+        // Filtrar las categorías ocultas
+        const categories = [...new Set(help.flatMap(p => p.tags))]
+            .filter(tag => !hiddenTags.includes(tag.toLowerCase()))
+            .sort()
 
         const menuList = categories
             .map(tag => {
@@ -94,9 +110,7 @@ const handler = async (m, { conn, usedPrefix }) => {
         const footer = `💖 Paz y Amor ✌️`
 
         const readMore = String.fromCharCode(8206).repeat(1500)
-        const menuText = `${headerInfo}\n${readMore}\n${menuList}\n\n${footer}`.trim()
-
-        console.log('[menu] Texto generado, largo:', menuText.length)
+        const menuText = `${headerInfo}\n${readMore}\n${subMenuSection}\n\n${menuList}\n\n${footer}`.trim()
 
         await conn.sendMessage(m.chat, {
             text: menuText,
@@ -117,8 +131,6 @@ const handler = async (m, { conn, usedPrefix }) => {
                 }
             }
         }, { quoted: m })
-
-        console.log('[menu] Mensaje enviado correctamente')
 
     } catch (e) {
         console.error('[menu] ERROR COMPLETO:')

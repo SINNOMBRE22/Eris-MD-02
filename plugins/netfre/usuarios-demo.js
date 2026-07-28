@@ -20,7 +20,7 @@ let handler = async (m, { conn, command }) => {
         }
 
         // ========== DETECCIÓN DE OWNER (robusta) ==========
-        const senderNumber = m.sender.split('@')[0] // elimina @s.whatsapp.net o @c.us
+        const senderNumber = m.sender.split('@')[0]
 
         let isOwner = false
         if (global.owner) {
@@ -30,7 +30,6 @@ let handler = async (m, { conn, command }) => {
             } else if (typeof global.owner === 'string') {
                 owners = [global.owner]
             }
-            // Limpiar números (solo dígitos)
             owners = owners.map(o => String(o).replace(/\D/g, ''))
             isOwner = owners.includes(senderNumber)
         }
@@ -44,7 +43,7 @@ let handler = async (m, { conn, command }) => {
             throw `⏱️ Espera ${wait} antes de crear otro usuario.`
         }
 
-        await m.reply("💻 Creando usuario random, espera...")
+        await m.reply('💻 Creando usuario random, espera...')
 
         let stdout = ''
         try {
@@ -56,7 +55,7 @@ let handler = async (m, { conn, command }) => {
             return
         }
 
-        // Solo actualizar estadísticas si NO es owner (para mantener limpias las del owner)
+        // Actualizar estadísticas solo si NO es owner
         if (!isOwner) {
             global.db.data.users[m.sender].comandos = (global.db.data.users[m.sender].comandos || 0) + 1
             global.db.data.users[m.sender].lastusuario = Date.now()
@@ -68,11 +67,12 @@ let handler = async (m, { conn, command }) => {
             text: `✅ *Cuenta generada*\n\nLos datos han sido enviados al privado.\n\n_Recuerda que puedes donar para mantener el servidor activo._`
         }, { quoted: m })
 
-        // Enviar datos al privado (sin ANSI)
+        // Enviar la tarjeta al privado (sin ANSI)
         const cleanOutput = stripAnsi(stdout)
         await conn.sendMessage(m.sender, {
             text: `❏ *DATOS DE CUENTA*\n\n${cleanOutput}\n\n*Nota:* Para puertos SSL WS usar Payload.`
         })
+
     } catch (err) {
         const message = (err && err.message) ? err.message : String(err)
         console.error('Error en usuarios-demo:', err)

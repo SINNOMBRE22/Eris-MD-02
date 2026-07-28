@@ -41,7 +41,7 @@ const STATIC_TYPES = new Set(['waifu', 'neko', 'kitsune', 'husbando'])
 async function getAnimeMedia(action) {
     const res = await fetch(`https://nekos.best/api/v2/${action}`, {
         timeout: 15_000,
-        headers: { 'User-Agent': 'Eris-MD/1.0' }
+        headers: { 'User-Agent': 'Eris-MD/1.0 (https://github.com/SINNOMBRE22/Eris-MD)' }
     })
     if (!res.ok) throw new Error(`nekos.best HTTP ${res.status}`)
     const json = await res.json()
@@ -72,13 +72,13 @@ let handler = async (m, { conn, command }) => {
         'lick':      { action: 'nom',       str: `👅 ${nameFrom} lamió a ${nameWho}` },
         'pat':       { action: 'pat',       str: `👋 ${nameFrom} acaricia a ${nameWho}` },
         'smug':      { action: 'smug',      str: `😏 ${nameFrom} se puso presumido/a` },
-        'bonk':      { action: 'punch',     str: `🔨 ${nameFrom} le dio un bonk a ${nameWho}` },
+        'bonk':      { action: 'bonk',      str: `🔨 ${nameFrom} le dio un bonk a ${nameWho}` },
         'yeet':      { action: 'yeet',      str: `🚀 ${nameFrom} mandó a volar a ${nameWho}` },
         'blush':     { action: 'blush',     str: `😳 ${nameFrom} se sonrojó` },
         'smile':     { action: 'smile',     str: `😊 ${nameFrom} le sonrió a ${nameWho}` },
         'wave':      { action: 'wave',      str: `👋 ${nameFrom} saluda a ${nameWho}` },
         'highfive':  { action: 'highfive',  str: `🖐️ ${nameFrom} chocó los cinco con ${nameWho}` },
-        'handhold':  { action: 'handshake', str: `🤝 ${nameFrom} tomó la mano de ${nameWho}` },
+        'handhold':  { action: 'handhold',  str: `🤝 ${nameFrom} tomó la mano de ${nameWho}` },
         'nom':       { action: 'nom',       str: `🍱 ${nameFrom} está comiendo...` },
         'bite':      { action: 'bite',      str: `🦷 ${nameFrom} mordió a ${nameWho}` },
         'glomp':     { action: 'hug',       str: `💨 ${nameFrom} se lanzó sobre ${nameWho}` },
@@ -111,7 +111,7 @@ let handler = async (m, { conn, command }) => {
 
         const { url: mediaUrl, isStatic } = await getAnimeMedia(interaction.action)
 
-        const resMedia = await fetch(mediaUrl, { timeout: 15_000, headers: { 'User-Agent': 'Eris-MD/1.0' } })
+        const resMedia = await fetch(mediaUrl, { timeout: 15_000, headers: { 'User-Agent': 'Eris-MD/1.0 (https://github.com/SINNOMBRE22/Eris-MD)' } })
         if (!resMedia.ok) throw new Error(`Descarga fallida: HTTP ${resMedia.status}`)
         const rawBuffer = Buffer.from(await resMedia.arrayBuffer())
 
@@ -148,14 +148,11 @@ let handler = async (m, { conn, command }) => {
     }
 }
 
+// help resumido: el menú muestra solo estas líneas, no los 57 comandos
 handler.help = [
-    'waifu', 'waifuh', 'neko', 'shinobu', 'megumin', 'bully', 'cuddle', 'cry', 'hug',
-    'awoo', 'kiss', 'lick', 'pat', 'smug', 'bonk', 'yeet', 'blush', 'smile', 'wave',
-    'highfive', 'handhold', 'nom', 'bite', 'glomp', 'slap', 'kill', 'kick', 'happy',
-    'wink', 'poke', 'dance', 'cringe', 'abrazar', 'beso', 'muak', 'lamer', 'palmada',
-    'palmadita', 'picar', 'bailar', 'feliz', 'matar', 'patear', 'patada', 'bofetada',
-    'comer', 'morder', 'mano', '5', 'ola', 'saludar', 'sonreir', 'sonrojarse',
-    'presumir', 'acurrucarse', 'llorar', 'bullying'
+    'hug @user', 'kiss @user', 'slap @user', 'pat @user', 'kill @user',
+    'waifu', 'neko', 'dance', 'happy', 'blush',
+    'y más... (abrazar, beso, matar, bailar, etc.)'
 ]
 handler.tags = ['anime']
 handler.command = /^(waifu|waifuh|neko|shinobu|megumin|bully|cuddle|cry|hug|awoo|kiss|lick|pat|smug|bonk|yeet|blush|smile|wave|highfive|handhold|nom|bite|glomp|slap|kill|kick|happy|wink|poke|dance|cringe|abrazar|beso|muak|lamer|palmada|palmadita|picar|bailar|feliz|matar|patear|patada|bofetada|comer|morder|mano|5|ola|saludar|sonreir|sonrojarse|presumir|acurrucarse|llorar|bullying)$/i

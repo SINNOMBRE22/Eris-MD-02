@@ -12,6 +12,7 @@ import moment from 'moment-timezone'
 global.owner = [
   ['525629885039', 'SinNombre', true],  // Formato estándar
   ['5215629885039', 'SinNombre', true], // Formato con el 1 de México
+  ['51793362997363', 'SinNombre', true], // Tu LID (para privado)
 ];
 
 

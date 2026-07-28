@@ -136,7 +136,7 @@ if (!state.creds.registered) {
 const connectionOptions = {
     logger: pino({ level: 'silent' }),
     printQRInTerminal: opcionConexion === '1',
-    browser: ['Mac OS', 'Safari', '16.5'],
+    browser: ['Eris-MD', 'Chrome', '120.0.0.0'],
     auth: {
         creds: state.creds,
         keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'fatal' })),
@@ -166,6 +166,8 @@ async function connectionUpdate(update) {
                 chalk.bgYellow.black.bold('\n ⚠️ ALERTA ') +
                 chalk.yellowBright(' Conexión cerrada, intentando reconectar...')
             )
+            // Espera 3s antes de reconectar para no entrar en loop que quema CPU
+            await new Promise(resolve => setTimeout(resolve, 3000))
             await global.reloadHandler(true)
         } else {
             console.log(
