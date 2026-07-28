@@ -136,7 +136,7 @@ if (!state.creds.registered) {
 const connectionOptions = {
     logger: pino({ level: 'silent' }),
     printQRInTerminal: opcionConexion === '1',
-    browser: ['Eris-MD', 'Chrome', '120.0.0.0'],
+    browser: ['Mac OS', 'Safari', '16.5'],
     auth: {
         creds: state.creds,
         keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'fatal' })),
