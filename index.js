@@ -19,6 +19,7 @@ import { makeWASocket, protoType, serialize } from './lib/simple.js'
 import { Low, JSONFile } from 'lowdb'
 import store from './lib/store.js'
 import readline from 'readline'
+import qrcode from 'qrcode-terminal'
 import NodeCache from 'node-cache'
 
 const _bNS = await import('@whiskeysockets/baileys')
@@ -78,12 +79,32 @@ global.loadDatabase = async function loadDatabase() {
     global.db.chain = chain(global.db.data)
 }
 
-// Carga en paralelo: DB + credenciales + versión de Baileys
-const [, { state, saveCreds }, { version }] = await Promise.all([
+// ─────────────────────────────────────────────────────────────
+//  VERSIÓN DE WHATSAPP WEB
+//  Baileys trae una versión fija que WhatsApp ya rechaza (error 405).
+//  Si algún día vuelve a fallar con 405, actualiza este número
+//  con el que aparezca en: https://wppconnect.io/whatsapp-versions/
+//  (toma solo el último bloque: 2.3000.XXXXXXXXXX -> XXXXXXXXXX)
+// ─────────────────────────────────────────────────────────────
+const WA_VERSION = [2, 3000, 1043986535]
+
+// Carga en paralelo: DB + credenciales
+const [, { state, saveCreds }] = await Promise.all([
     loadDatabase(),
-    useMultiFileAuthState(sessionFolder),
-    fetchLatestBaileysVersion()
+    useMultiFileAuthState(sessionFolder)
 ])
+
+// Intentamos la versión oficial; si falla o está deprecada, usamos la fija
+let version = WA_VERSION
+try {
+    const latest = await fetchLatestBaileysVersion()
+    // Solo la usamos si es más nueva que la nuestra
+    if (latest?.version && latest.version[2] > WA_VERSION[2]) {
+        version = latest.version
+    }
+} catch {
+    // Sin conexión al servicio de versiones: seguimos con la fija
+}
 
 console.log(chalk.green('✓ Base de datos cargada correctamente.\n'))
 
@@ -135,7 +156,7 @@ if (!state.creds.registered) {
 // --- SOCKET ---
 const connectionOptions = {
     logger: pino({ level: 'silent' }),
-    printQRInTerminal: opcionConexion === '1',
+    // printQRInTerminal fue deprecado: el QR se dibuja a mano en connectionUpdate
     browser: ['Mac OS', 'Safari', '16.5'],
     auth: {
         creds: state.creds,
@@ -153,14 +174,42 @@ global.conn = makeWASocket(connectionOptions)
 
 // --- MANEJADOR DE CONEXIÓN ---
 async function connectionUpdate(update) {
-    const { connection, lastDisconnect } = update
+    const { connection, lastDisconnect, qr } = update
+
+    // Dibujar el QR a mano (printQRInTerminal ya no existe en Baileys)
+    if (qr && opcionConexion === '1') {
+        console.log(chalk.bold.cyan('\n╭━ 📱 ESCANEA ESTE CÓDIGO QR ━━━━━━━━━╮\n'))
+        qrcode.generate(qr, { small: true })
+        console.log(chalk.bold.cyan('╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯'))
+        console.log(chalk.yellowBright('WhatsApp → Dispositivos vinculados → Vincular dispositivo\n'))
+    }
+
     if (connection === 'open') {
         console.log(chalk.bold.green('\n╭━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╮'))
         console.log(chalk.bold.white('  ❀ Eris-Bot Conectado Exitosamente ❀  '))
         console.log(chalk.bold.green('╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯\n'))
     }
     if (connection === 'close') {
-        const reason = new Boom(lastDisconnect?.error)?.output?.statusCode
+        const boom = new Boom(lastDisconnect?.error)
+        const reason = boom?.output?.statusCode
+
+        // Diagnóstico: mostrar el motivo real del cierre
+        const motivos = {
+            401: 'Sesión inválida / dispositivo eliminado',
+            403: 'Número baneado por WhatsApp',
+            405: 'Método no permitido (versión rechazada)',
+            408: 'Tiempo de espera agotado',
+            411: 'Conflicto de multi-dispositivo',
+            428: 'Conexión cerrada por WhatsApp',
+            440: 'Sesión reemplazada (¿otra instancia con el mismo número?)',
+            500: 'Sesión corrupta (borra la carpeta de sesión)',
+            503: 'Servicio de WhatsApp no disponible',
+            515: 'Reinicio requerido (normal tras vincular)'
+        }
+        console.log(
+            chalk.gray(`   [diagnóstico] código: ${reason ?? 'desconocido'} — ${motivos[reason] || lastDisconnect?.error?.message || 'sin detalle'}`)
+        )
+
         if (reason !== DisconnectReason.loggedOut) {
             console.log(
                 chalk.bgYellow.black.bold('\n ⚠️ ALERTA ') +
@@ -221,13 +270,27 @@ async function iniciarEris() {
             chalk.bold.white(`${Object.keys(global.plugins).length}\n`)
         )
 
-        // Esperamos 4 segundos a que la conexión con WhatsApp se estabilice
-        // antes de pedir el código (evita el rechazo por conexión inestable)
+        // Esperar a que el socket esté listo, con reintentos.
+        // "Connection Closed" ocurre si pedimos el código antes de tiempo.
         console.log(chalk.yellowBright('⏳ Conectando con WhatsApp, por favor espera...'))
-        await new Promise(resolve => setTimeout(resolve, 4000))
 
         try {
-            let codigo = await global.conn.requestPairingCode(numero)
+            let codigo = null
+            let ultimoError = null
+
+            for (let intento = 1; intento <= 5; intento++) {
+                await new Promise(resolve => setTimeout(resolve, 3000))
+                try {
+                    codigo = await global.conn.requestPairingCode(numero)
+                    if (codigo) break
+                } catch (err) {
+                    ultimoError = err
+                    console.log(chalk.gray(`   · reintentando (${intento}/5)...`))
+                }
+            }
+
+            if (!codigo) throw ultimoError || new Error('No se obtuvo el código')
+
             codigo = codigo.match(/.{1,4}/g)?.join('-') || codigo
 
             console.log(chalk.bold.magenta('╭━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╮'))
