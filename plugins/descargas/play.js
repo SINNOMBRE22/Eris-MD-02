@@ -1,5 +1,6 @@
 import yts from 'yt-search';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
@@ -8,7 +9,9 @@ const NEWSLETTER_JID = '120363407502496951@newsletter';
 const NEWSLETTER_NAME = 'Eris Service';
 const SOURCE_URL = 'https://github.com/SINNOMBRE22/Eris-MD';
 const YTS_TIMEOUT_MS = 12_000;
-const TMP_DIR = path.join(process.cwd(), 'tmp');
+
+// Fuera de process.cwd() para que PM2 (watch:true) nunca lo detecte y reinicie el bot a medias
+const TMP_DIR = path.join(os.tmpdir(), 'eris-md-play');
 const BIN_DIR = path.join(TMP_DIR, 'bin');
 const YTDLP_LOCAL = path.join(BIN_DIR, 'yt-dlp');
 const YTDLP_URL = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp';
@@ -19,13 +22,10 @@ const buildContext = (title = '🌸 ERIS SERVICE 🌸', body = '') => ({ isForwa
 let ytdlpBin = null;
 async function resolveYtdlp() {
     if (ytdlpBin) return ytdlpBin;
-    // 1. ¿Está instalado en el sistema?
     try { await execAsync('yt-dlp --version', { timeout: 10_000 }); ytdlpBin = 'yt-dlp'; return ytdlpBin; } catch {}
-    // 2. ¿Ya existe el binario local?
     if (fs.existsSync(YTDLP_LOCAL)) {
         try { await execAsync(`"${YTDLP_LOCAL}" --version`, { timeout: 10_000 }); ytdlpBin = YTDLP_LOCAL; return ytdlpBin; } catch { try { fs.unlinkSync(YTDLP_LOCAL); } catch {} }
     }
-    // 3. Descargar binario oficial
     console.log('[play] yt-dlp no encontrado, descargando binario…');
     if (!fs.existsSync(BIN_DIR)) fs.mkdirSync(BIN_DIR, { recursive: true });
     await execAsync(`curl -fsSL -o "${YTDLP_LOCAL}" "${YTDLP_URL}" || wget -q -O "${YTDLP_LOCAL}" "${YTDLP_URL}"`, { timeout: 120_000 });
@@ -37,20 +37,57 @@ async function resolveYtdlp() {
     return ytdlpBin;
 }
 
+// ── Auto-actualizar yt-dlp si el binario está viejo (>7 días) ──
+async function ensureFreshYtdlp(bin) {
+    if (bin !== YTDLP_LOCAL) return;
+    try {
+        const stat = fs.statSync(YTDLP_LOCAL);
+        const ageMs = Date.now() - stat.mtimeMs;
+        if (ageMs > 7 * 24 * 60 * 60 * 1000) {
+            console.log('[play] yt-dlp local desactualizado (>7 días), refrescando…');
+            fs.unlinkSync(YTDLP_LOCAL);
+            ytdlpBin = null;
+            await resolveYtdlp();
+        }
+    } catch {}
+}
+
+const PLAYER_CLIENTS = ['android', 'ios', 'web_safari', 'tv'];
+
 async function downloadAudio(videoUrl) {
     const bin = await resolveYtdlp();
+    await ensureFreshYtdlp(bin);
     if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR, { recursive: true });
-    const outPath = path.join(TMP_DIR, `play_${Date.now()}.mp3`);
-    await execAsync(`"${bin}" --no-playlist -x --audio-format mp3 --audio-quality 128K --no-warnings --quiet -o "${outPath}" "${videoUrl}"`, { timeout: 90_000 });
-    if (!fs.existsSync(outPath)) throw new Error('yt-dlp no generó el archivo');
-    return outPath;
+
+    let lastErr = null;
+    for (const client of PLAYER_CLIENTS) {
+        const outPath = path.join(TMP_DIR, `play_${Date.now()}_${client}.mp3`);
+        const cmd = `"${bin}" --no-playlist -x --audio-format mp3 --audio-quality 128K ` +
+            `--extractor-args "youtube:player_client=${client}" ` +
+            `--no-warnings --quiet -o "${outPath}" "${videoUrl}"`;
+        try {
+            await execAsync(cmd, { timeout: 90_000 });
+            if (fs.existsSync(outPath)) {
+                console.log(`[play] ✅ Descarga OK con cliente: ${client}`);
+                return outPath;
+            }
+            lastErr = new Error(`yt-dlp no generó el archivo (cliente ${client})`);
+        } catch (err) {
+            console.warn(`[play] ⚠️ Falló con cliente "${client}": ${err?.message?.split('\n')[0] ?? err}`);
+            lastErr = err;
+            try { if (fs.existsSync(outPath)) fs.unlinkSync(outPath); } catch {}
+        }
+    }
+    throw lastErr ?? new Error('No se pudo descargar el audio con ningún cliente');
 }
+
 async function searchTrack(query) {
     const timer = new Promise((_, rej) => setTimeout(() => rej(new Error('Búsqueda tardó demasiado')), YTS_TIMEOUT_MS));
     const result = await Promise.race([yts(query), timer]);
     return result?.videos?.[0] ?? null;
 }
 function fmtDuration(sec = 0) { const m = Math.floor(sec / 60); const s = String(sec % 60).padStart(2, '0'); return `${m}:${s}`; }
+
 const handler = async (m, { conn, text, usedPrefix, command }) => {
     if (!text?.trim()) {
         return conn.sendMessage(m.chat, { text: [`🌸 *¿Qué canción quieres escuchar?*`, ``, `Escribe el nombre del artista o la canción.`, ``, `> 📌 *Ejemplo:* ${usedPrefix + command} Bad Bunny Tití Me Preguntó`].join('\n'), contextInfo: { mentionedJid: [m.sender], ...buildContext('🌸 ERIS SERVICE - PLAYER 🌸', `Hola ${m.pushName || 'usuario'} 👋`) } }, { quoted: m });
@@ -61,13 +98,22 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
         const track = await searchTrack(text.trim());
         if (!track) { m.react('❌').catch(() => {}); return conn.sendMessage(m.chat, { text: `❌ *No encontré resultados para:* _${text.trim()}_\n\nIntenta con otro nombre.`, contextInfo: buildContext('Sin resultados') }, { quoted: m }); }
         const duration = typeof track.seconds === 'number' ? fmtDuration(track.seconds) : (track.duration?.timestamp ?? '?:??');
+
+        // Mensaje informativo (sin miniatura de la canción, solo tu logo genérico de marca)
         await conn.sendMessage(m.chat, { text: [`🎵 *${track.title}*`, ``, `👤 *Artista:* ${track.author?.name ?? 'Desconocido'}`, `⏱ *Duración:* ${duration}`, ``, `_Descargando audio…_ ⏳`].join('\n'), contextInfo: buildContext('🌸 REPRODUCIENDO AHORA 🌸', track.title) }, { quoted: m });
         m.react('⬇️').catch(() => {});
         console.log(`[play] Descargando: ${track.url}`);
         audioPath = await downloadAudio(track.url);
         console.log(`[play] ✅ Listo: ${audioPath}`);
         m.react('🎧').catch(() => {});
-        await conn.sendMessage(m.chat, { audio: fs.readFileSync(audioPath), mimetype: 'audio/mpeg', fileName: `${track.title.replace(/[^\w\s\-áéíóúñü]/gi, '')}.mp3`, ptt: false, contextInfo: buildContext('🌸 ERIS SERVICE 🌸', track.title) }, { quoted: m });
+
+        // Audio plano, sin contextInfo ni miniatura — se reproduce como nota de audio normal, igual que Spotify
+        await conn.sendMessage(m.chat, {
+            audio: fs.readFileSync(audioPath),
+            mimetype: 'audio/mpeg',
+            fileName: `${track.title.replace(/[^\w\s\-áéíóúñü]/gi, '')}.mp3`,
+            ptt: false
+        }, { quoted: m });
         m.react('✅').catch(() => {});
     } catch (err) {
         console.error('[play] Error:', err?.message ?? err);

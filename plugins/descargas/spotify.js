@@ -1,121 +1,198 @@
-/* ERIS-MD SPOTIFY DOWNLOADER - DUAL API */
+/* ERIS-MD SPOTIFY DOWNLOADER - Embed scrape (oficial, sin API key) + yt-dlp con match por duración */
 
 import axios from 'axios';
+import yts from 'yt-search';
 import fs from 'fs';
 import path from 'path';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+const execAsync = promisify(exec);
 
-const CAUSA_API_KEY = 'causa-ee5ee31dcfc79da4'; 
 const SIZE_LIMIT_MB = 100;
-const newsletterJid = '120363407502496951@newsletter';
-const newsletterName = 'Eris Service';
 const redes = 'https://github.com/SINNOMBRE22/Eris-MD';
+
+const TMP_DIR = path.join(process.cwd(), 'tmp');
+const BIN_DIR = path.join(TMP_DIR, 'bin');
+const YTDLP_LOCAL = path.join(BIN_DIR, 'yt-dlp');
+const YTDLP_URL = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp';
+const PLAYER_CLIENTS = ['android', 'ios', 'web_safari', 'tv'];
+
+// Palabras que descartan un resultado SALVO que la canción original las tenga
+const BAD_WORDS = ['cover', 'remix', 'live', 'en vivo', 'reaction', 'karaoke', 'instrumental', 'sped up', 'slowed', '8d audio', 'nightcore', 'tutorial'];
+
+// ── Resolver binario yt-dlp ──
+let ytdlpBin = null;
+async function resolveYtdlp() {
+    if (ytdlpBin) return ytdlpBin;
+    try { await execAsync('yt-dlp --version', { timeout: 10_000 }); ytdlpBin = 'yt-dlp'; return ytdlpBin; } catch {}
+    if (fs.existsSync(YTDLP_LOCAL)) {
+        try { await execAsync(`"${YTDLP_LOCAL}" --version`, { timeout: 10_000 }); ytdlpBin = YTDLP_LOCAL; return ytdlpBin; } catch { try { fs.unlinkSync(YTDLP_LOCAL); } catch {} }
+    }
+    console.log('[spotify] Descargando binario yt-dlp…');
+    if (!fs.existsSync(BIN_DIR)) fs.mkdirSync(BIN_DIR, { recursive: true });
+    await execAsync(`curl -fsSL -o "${YTDLP_LOCAL}" "${YTDLP_URL}" || wget -q -O "${YTDLP_LOCAL}" "${YTDLP_URL}"`, { timeout: 120_000 });
+    if (!fs.existsSync(YTDLP_LOCAL)) throw new Error('No se pudo descargar yt-dlp');
+    fs.chmodSync(YTDLP_LOCAL, 0o755);
+    ytdlpBin = YTDLP_LOCAL;
+    return ytdlpBin;
+}
+
+async function downloadFromYoutube(videoUrl) {
+    const bin = await resolveYtdlp();
+    if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR, { recursive: true });
+    let lastErr = null;
+    for (const client of PLAYER_CLIENTS) {
+        const outPath = path.join(TMP_DIR, `spotify_${Date.now()}_${client}.mp3`);
+        const cmd = `"${bin}" --no-playlist -x --audio-format mp3 --audio-quality 128K ` +
+            `--extractor-args "youtube:player_client=${client}" --no-warnings --quiet -o "${outPath}" "${videoUrl}"`;
+        try {
+            await execAsync(cmd, { timeout: 90_000 });
+            if (fs.existsSync(outPath)) { console.log(`[spotify] ✅ Descarga OK con cliente: ${client}`); return outPath; }
+        } catch (err) {
+            console.warn(`[spotify] ⚠️ Falló cliente "${client}":`, err?.message?.split('\n')[0] ?? err);
+            lastErr = err;
+            try { if (fs.existsSync(outPath)) fs.unlinkSync(outPath); } catch {}
+        }
+    }
+    throw lastErr ?? new Error('No se pudo descargar el audio con ningún cliente');
+}
+
+function extractTrackId(url) {
+    const match = url.match(/track\/([a-zA-Z0-9]+)/);
+    return match ? match[1] : null;
+}
+
+// ── Metadata real desde la página embed pública de Spotify (artista + título + duración) ──
+async function getSpotifyMeta(spotifyUrl) {
+    const trackId = extractTrackId(spotifyUrl);
+    if (!trackId) throw new Error('No se pudo extraer el ID de la canción del link');
+
+    const embedUrl = `https://open.spotify.com/embed/track/${trackId}`;
+    const { data: html } = await axios.get(embedUrl, {
+        timeout: 15_000,
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+    });
+
+    const jsonMatch = html.match(/<script[^>]*id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+    if (!jsonMatch) throw new Error('No se encontró el bloque de datos en la página de Spotify');
+
+    const parsed = JSON.parse(jsonMatch[1]);
+    const entity = parsed?.props?.pageProps?.state?.data?.entity;
+    if (!entity) throw new Error('Spotify no devolvió datos de la canción (¿link inválido o removido?)');
+
+    const title = entity.title;
+    const artist = entity.subtitle || entity.artists?.map(a => a.name).join(', ') || 'Desconocido';
+    const durationSec = entity.duration ? Math.round(entity.duration / 1000) : null;
+    const thumbnail = entity.coverArt?.sources?.[0]?.url || entity.coverArt?.[0]?.url || null;
+
+    return { title, artist, durationSec, thumbnail };
+}
+
+// ── Buscar en YouTube y elegir el mejor match por duración + nombre limpio ──
+async function findBestMatch(query, targetDurationSec) {
+    const result = await yts(query);
+    const candidates = (result?.videos ?? []).slice(0, 8);
+    if (!candidates.length) return null;
+
+    const scored = candidates.map(v => {
+        const titleLower = v.title.toLowerCase();
+        const hasBadWord = BAD_WORDS.some(w => titleLower.includes(w));
+        const durationDiff = (targetDurationSec && typeof v.seconds === 'number')
+            ? Math.abs(v.seconds - targetDurationSec)
+            : 999;
+        return { video: v, hasBadWord, durationDiff };
+    });
+
+    const clean = scored.filter(s => !s.hasBadWord);
+    const pool = clean.length ? clean : scored;
+    pool.sort((a, b) => a.durationDiff - b.durationDiff);
+
+    console.log('[spotify] Candidatos evaluados:', pool.map(p => `${p.video.title} (${p.video.seconds}s, diff=${p.durationDiff})`).slice(0, 3));
+    return pool[0].video;
+}
 
 const handler = async (m, { conn, args, usedPrefix, command }) => {
   const name = m.pushName || (await conn.getName(m.sender)) || "Usuario";
   const spotifyUrl = args[0];
 
   let thumb;
-  try {
-    thumb = fs.readFileSync(path.join(process.cwd(), 'src/imagenes/perfil2.jpeg'));
-  } catch {
-    thumb = Buffer.alloc(0);
-  }
+  try { thumb = fs.readFileSync(path.join(process.cwd(), 'src/imagenes/perfil2.jpeg')); } catch { thumb = Buffer.alloc(0); }
 
-  // Validación estricta de enlace
   if (!spotifyUrl || !spotifyUrl.includes('open.spotify.com/track')) {
     return conn.sendMessage(m.chat, {
         text: `🌸 *Falta un enlace real de Spotify, ${name}.*\n\nDebes enviar la URL de una canción (Track).\n> *Ejemplo:* ${usedPrefix + command} https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT`,
-        contextInfo: {
-            externalAdReply: {
-                title: '🌸 ERIS SERVICE - SPOTIFY 🌸',
-                body: `Esperando enlace válido...`,
-                thumbnail: thumb, 
-                sourceUrl: redes, 
-                mediaType: 1
-            }
-        }
+        contextInfo: { externalAdReply: { title: '🌸 ERIS SERVICE - SPOTIFY 🌸', body: `Esperando enlace válido...`, thumbnail: thumb, sourceUrl: redes, mediaType: 1 } }
     }, { quoted: m });
   }
 
   await m.react("🕓");
+  let audioPath = null;
 
   try {
-    let audioUrl, title, artist, cover;
+    console.log('[spotify] Extrayendo metadata real…');
+    const meta = await getSpotifyMeta(spotifyUrl);
+    console.log('[spotify] Meta:', meta.artist, '-', meta.title, `(${meta.durationSec}s)`);
 
-    // --- INTENTO 1: API RYZEN (Súper rápida para Spotify) ---
-    try {
-        const res1 = await axios.get(`https://api.ryzendesu.vip/api/downloader/spotify?url=${encodeURIComponent(spotifyUrl)}`);
-        if (res1.data && res1.data.success) {
-            audioUrl = res1.data.link;
-            title = res1.data.metadata.title;
-            artist = res1.data.metadata.artists;
-            cover = res1.data.metadata.cover;
-        } else throw new Error('Ryzen falló');
-    } catch (e1) {
-        // --- INTENTO 2: API CAUSAS (Tu API original) ---
-        const { data: res2 } = await axios.get(`https://rest.apicausas.xyz/api/v1/descargas/spotify`, {
-          params: { url: spotifyUrl, apikey: CAUSA_API_KEY }
-        });
-        if (res2.status && res2.data.download.url) {
-            audioUrl = res2.data.download.url;
-            title = res2.data.title;
-            artist = res2.data.artist;
-            cover = res2.data.thumbnail;
-        } else throw new Error('Causas falló');
+    // Thumbnail real de la portada (para la tarjeta compacta), con fallback al logo propio
+    let cardThumb = thumb;
+    if (meta.thumbnail) {
+        try {
+            const resThumb = await axios.get(meta.thumbnail, { responseType: 'arraybuffer', timeout: 10_000 });
+            cardThumb = Buffer.from(resThumb.data);
+        } catch (eThumb) {
+            console.warn('[spotify] ⚠️ No se pudo bajar el cover, uso logo propio:', eThumb.message);
+        }
     }
 
-    if (!audioUrl) throw new Error("No se pudo extraer el audio.");
-
     let caption = `╭─── [ 🎵 *SPOTIFY DL* ] ──···\n`;
-    caption += `│ 🎶 *Título:* ${title}\n`;
-    caption += `│ 👤 *Artista:* ${artist}\n`;
+    caption += `│ 🎶 *Título:* ${meta.title}\n`;
+    caption += `│ 👤 *Artista:* ${meta.artist}\n`;
     caption += `╰─────────────────────────···\n\n`;
-    caption += `> 🌸 *Procesando audio, por favor espera...*`;
+    caption += `> 🌸 *Buscando la versión Original...*`;
 
-    // Enviar tarjeta con la portada del álbum
+    // Solo tarjeta compacta (sin imagen grande duplicada)
     await conn.sendMessage(m.chat, {
-      image: { url: cover },
-      caption: caption,
+      text: caption,
       contextInfo: {
-          externalAdReply: {
-              title: `🌸 REPRODUCIENDO SPOTIFY 🌸`,
-              body: `${title}`,
-              thumbnail: thumb,
-              mediaType: 1,
-              sourceUrl: spotifyUrl
-          }
+        externalAdReply: {
+          title: `🌸 REPRODUCIENDO SPOTIFY 🌸`,
+          body: `${meta.artist} - ${meta.title}`,
+          thumbnail: cardThumb,
+          mediaType: 1,
+          sourceUrl: spotifyUrl,
+          renderLargerThumbnail: false
+        }
       }
     }, { quoted: m });
 
-    await m.react("🎧");
+    const query = `${meta.artist} - ${meta.title}`;
+    console.log('[spotify] Buscando:', query);
+    const track = await findBestMatch(query, meta.durationSec);
+    if (!track) throw new Error(`No se encontró "${query}" en YouTube`);
+    console.log('[spotify] Elegido:', track.title, track.url);
 
-    // Descargar a Buffer
-    const responseAudio = await axios.get(audioUrl, { responseType: 'arraybuffer' });
-    const audioBuffer = Buffer.from(responseAudio.data);
+    await m.react("⬇️");
+    audioPath = await downloadFromYoutube(track.url);
+
+    const audioBuffer = fs.readFileSync(audioPath);
     const fileSizeMb = audioBuffer.length / (1024 * 1024);
+    console.log(`[spotify] Audio listo: ${fileSizeMb.toFixed(2)} MB`);
 
-    // Enviar MP3
+    const fileName = `${meta.artist} - ${meta.title}`.replace(/[^\w\s\-áéíóúñü]/gi, '');
     if (fileSizeMb > SIZE_LIMIT_MB) {
-        await conn.sendMessage(m.chat, {
-            document: audioBuffer,
-            fileName: `${title}.mp3`,
-            mimetype: 'audio/mpeg',
-            caption: `> 🌸 *Archivo pesado. Se envió como documento.*`
-        }, { quoted: m });
+        await conn.sendMessage(m.chat, { document: audioBuffer, fileName: `${fileName}.mp3`, mimetype: 'audio/mpeg', caption: `> 🌸 *Archivo pesado. Se envió como documento.*` }, { quoted: m });
         await m.react("📄");
     } else {
-        await conn.sendMessage(m.chat, {
-            audio: audioBuffer,
-            mimetype: "audio/mpeg",
-            fileName: `${title}.mp3`
-        }, { quoted: m });
+        await conn.sendMessage(m.chat, { audio: audioBuffer, mimetype: "audio/mpeg", fileName: `${fileName}.mp3` }, { quoted: m });
         await m.react("✅");
     }
 
   } catch (e) {
-    console.error("Error Spotify:", e.message);
+    console.error("[spotify] ❌ Error final:", e?.message, e?.response?.status, e?.response?.data ?? '');
     await m.react("❌");
-    conn.reply(m.chat, `🌸 *Error:* No pude descargar la pista. Verifica que el enlace sea de una canción (no playlists ni podcasts).`, m);
+    conn.reply(m.chat, `🌸 *Error:* No pude descargar la pista.\n\n_${e?.message ?? 'Error desconocido'}_`, m);
+  } finally {
+    if (audioPath && fs.existsSync(audioPath)) fs.unlinkSync(audioPath);
   }
 };
 
