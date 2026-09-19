@@ -2,7 +2,7 @@ import yts from 'yt-search';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { exec } from 'child_process';
+import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 const execAsync = promisify(exec);
 const NEWSLETTER_JID = '120363407502496951@newsletter';
@@ -63,7 +63,6 @@ async function ensureFreshYtdlp(bin) {
 }
 
 // Saca la razón real del fallo desde stderr/stdout de yt-dlp (prioriza líneas "ERROR:").
-// Antes usábamos --quiet, que tapaba esto por completo y solo dejaba ver "Command failed".
 function extractYtdlpError(output) {
     if (!output) return null;
     const lines = output.split('\n').map(l => l.replace(/\x1b\[[0-9;]*m/g, '').trim()).filter(Boolean);
@@ -91,44 +90,79 @@ function cleanupPrefix(prefix) {
     } catch {}
 }
 
-// Lanza varios clientes de yt-dlp EN PARALELO (no en fila) para el mismo video.
-// Gana el primero que produzca archivo; los demás se matan y se limpian sus restos.
+// Mata el proceso Y todo lo que haya generado (grupo completo). Necesario porque un yt-dlp
+// lanzado con detached:true es líder de su propio grupo — matar solo child.pid puede dejar
+// hijos huérfanos corriendo (la causa más probable de que el bot se "cuelgue" en llamadas futuras).
+function killTree(child) {
+    if (!child || child.killed) return;
+    try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch {} }
+}
+
+// Lanza varios clientes de yt-dlp EN PARALELO (no en fila) para el mismo video, con spawn
+// directo (SIN shell de por medio) para tener control real del proceso y poder matarlo entero.
+// Watchdog propio además del que ya trae spawn, por si el proceso ignora la señal.
 // Sin -x/--audio-format: bajamos bestaudio tal cual, sin reencode con ffmpeg (mucho más rápido).
 function raceClients(bin, clients, videoUrl, timeoutMs) {
     return clients.map(client => {
         const outPrefix = path.join(TMP_DIR, `play_${Date.now()}_${client}_${Math.random().toString(36).slice(2, 7)}`);
+        const args = ['--no-playlist', '--no-progress', '-f', 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio', '-o', `${outPrefix}.%(ext)s`];
+        if (client !== 'default') args.push('--extractor-args', `youtube:player_client=${client}`);
+        args.push(videoUrl);
+
+        let settled = false;
         let child;
+        let stdoutBuf = '';
+        let stderrBuf = '';
+
         const promise = new Promise((resolve, reject) => {
-            // 'default' = último recurso: dejamos que yt-dlp elija el cliente por sí mismo (sin forzar)
-            const extractorArg = client === 'default' ? '' : `--extractor-args "youtube:player_client=${client}" `;
-            const cmd = `"${bin}" --no-playlist --no-progress -f "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio" ` +
-                `${extractorArg}-o "${outPrefix}.%(ext)s" "${videoUrl}"`;
-            // Sin --quiet: así stderr trae el motivo real cuando algo falla (bloqueo, formato, video privado, etc.)
-            child = exec(cmd, { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) => {
-                if (error) {
-                    const reason = (extractYtdlpError(stderr) || extractYtdlpError(stdout) || error.message.split('\n')[0] || 'Error desconocido').slice(0, 300);
-                    console.log(`[play] ✗ Cliente "${client}" falló: ${reason}`); // visible aunque otro cliente gane
-                    return reject(Object.assign(new Error(reason), { client }));
+            child = spawn(bin, args, { detached: true });
+
+            const watchdog = setTimeout(() => {
+                if (settled) return;
+                console.log(`[play] ⏱️ Cliente "${client}" superó ${timeoutMs}ms, matando proceso…`);
+                killTree(child);
+            }, timeoutMs);
+
+            child.stdout?.on('data', d => { stdoutBuf += d; if (stdoutBuf.length > 50_000) stdoutBuf = stdoutBuf.slice(-50_000); });
+            child.stderr?.on('data', d => { stderrBuf += d; if (stderrBuf.length > 50_000) stderrBuf = stderrBuf.slice(-50_000); });
+
+            child.on('error', (err) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(watchdog);
+                console.log(`[play] ✗ Cliente "${client}" no pudo lanzarse: ${err.message}`);
+                reject(Object.assign(new Error(err.message), { client }));
+            });
+
+            child.on('close', (code, signal) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(watchdog);
+                if (code === 0) {
+                    const file = findDownloadedFile(outPrefix);
+                    if (file && fs.existsSync(file) && fs.statSync(file).size > 0) return resolve({ file, client });
+                    console.log(`[play] ✗ Cliente "${client}" no generó archivo`);
+                    return reject(new Error(`Archivo no generado (cliente ${client})`));
                 }
-                const file = findDownloadedFile(outPrefix);
-                if (file && fs.statSync(file).size > 0) return resolve({ file, client });
-                console.log(`[play] ✗ Cliente "${client}" no generó archivo`);
-                reject(new Error(`Archivo no generado (cliente ${client})`));
+                const reason = signal
+                    ? `Proceso terminado (${signal})`
+                    : (extractYtdlpError(stderrBuf) || extractYtdlpError(stdoutBuf) || `yt-dlp salió con código ${code}`).slice(0, 300);
+                console.log(`[play] ✗ Cliente "${client}" falló: ${reason}`);
+                reject(Object.assign(new Error(reason), { client }));
             });
         });
-        return { client, outPrefix, promise, kill: () => { try { child?.kill('SIGKILL'); } catch {} } };
+
+        return { client, outPrefix, promise, kill: () => killTree(child) };
     });
 }
 
-async function downloadAudio(videoUrl) {
+async function downloadAudio(videoUrl, signal) {
     const bin = await resolveYtdlp();
     if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR, { recursive: true });
 
-    // Dos oleadas en paralelo en vez de 4 intentos en fila: el caso normal (android/ios)
-    // resuelve en segundos; solo si ambos fallan se prueba la segunda oleada.
-    // 'default' va primero: en las pruebas fue el único que consistentemente descargó.
-    // Se deja android/ios/web_safari/tv como respaldo por si ALGÚN video sí bloquea a 'default'
-    // (esa fue la razón original de la rotación de clientes).
+    // 'default' va primero: en las pruebas fue el único que consistentemente descargó rápido.
+    // android/ios/web_safari/tv quedan como respaldo por si ALGÚN video sí bloquea a 'default'
+    // (esa fue la razón original de la rotación de clientes, por los 403 de IP de datacenter).
     const phases = [
         { clients: ['default'], timeoutMs: 20_000 },
         { clients: ['android', 'ios'], timeoutMs: 18_000 },
@@ -137,16 +171,23 @@ async function downloadAudio(videoUrl) {
 
     let lastErr = null;
     for (const phase of phases) {
+        if (signal?.aborted) throw new Error('ABORTED');
         const jobs = raceClients(bin, phase.clients, videoUrl, phase.timeoutMs);
+        const onAbort = () => jobs.forEach(j => j.kill());
+        signal?.addEventListener('abort', onAbort, { once: true });
+
         try {
             const winner = await Promise.any(jobs.map(j => j.promise));
+            signal?.removeEventListener('abort', onAbort);
             console.log(`[play] ✅ Descarga OK con cliente: ${winner.client}`);
             for (const j of jobs) { if (j.client !== winner.client) { j.kill(); cleanupPrefix(j.outPrefix); } }
             ensureFreshYtdlp(bin).catch(() => {}); // en segundo plano, no bloquea la respuesta
             return winner.file;
         } catch (aggErr) {
+            signal?.removeEventListener('abort', onAbort);
             for (const j of jobs) cleanupPrefix(j.outPrefix);
             lastErr = aggErr?.errors?.[0] ?? aggErr;
+            if (signal?.aborted) throw new Error('ABORTED');
         }
     }
     ensureFreshYtdlp(bin).catch(() => {});
@@ -166,6 +207,7 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
     }
     m.react('🔍').catch(() => {});
     let audioPath = null;
+    const controller = new AbortController();
     try {
         const track = await searchTrack(text.trim());
         if (!track) { m.react('❌').catch(() => {}); return conn.sendMessage(m.chat, { text: `❌ *No encontré resultados para:* _${text.trim()}_\n\nIntenta con otro nombre.`, contextInfo: buildContext('Sin resultados') }, { quoted: m }); }
@@ -175,12 +217,18 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
         m.react('⬇️').catch(() => {});
         console.log(`[play] Descargando: ${track.url}`);
 
-        // Timeout maestro: si por lo que sea todo se cuelga, igual respondemos algo
-        // en vez de dejar al usuario esperando para siempre.
-        const downloadPromise = downloadAudio(track.url);
+        // Timeout maestro: si todo se cuelga, respondemos igual en vez de dejar al usuario
+        // esperando para siempre — Y matamos cualquier proceso yt-dlp que siga corriendo,
+        // para que no quede como zombie arruinando el siguiente .play.
+        const downloadPromise = downloadAudio(track.url, controller.signal);
         downloadPromise.catch(() => {}); // evita "unhandled rejection" si gana el timeout
         const masterTimeout = new Promise((_, rej) => setTimeout(() => rej(new Error('MASTER_TIMEOUT')), MASTER_TIMEOUT_MS));
-        audioPath = await Promise.race([downloadPromise, masterTimeout]);
+        try {
+            audioPath = await Promise.race([downloadPromise, masterTimeout]);
+        } catch (raceErr) {
+            if (raceErr.message === 'MASTER_TIMEOUT') controller.abort();
+            throw raceErr;
+        }
 
         console.log(`[play] ✅ Listo: ${audioPath}`);
         m.react('🎧').catch(() => {});

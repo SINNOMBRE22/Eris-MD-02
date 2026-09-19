@@ -15,7 +15,7 @@ command -v pm2 &>/dev/null || npm install -g pm2
 #   --time false               -> sin timestamps
 pm2 start index.js \
     --name eris-bot \
-    --max-memory-restart 300M \
+    --max-memory-restart 2000M \
     -o /dev/null \
     -e /dev/null \
     --merge-logs
